@@ -1,4 +1,5 @@
--- THE HUB: Isolated hub_* tables/functions/trigger. Review before running in a shared Supabase project. Do not run the earlier unprefixed schema.
+-- THE HUB: isolated tables for a shared Supabase project.
+-- No auth.users triggers are created or modified. Run once after reviewing existing hub_* objects.
 create extension if not exists pgcrypto;
 create table if not exists public.hub_profiles (id uuid primary key references auth.users(id) on delete cascade, username text not null unique check (username ~ '^[a-z0-9_]{3,24}$'), display_name text not null check (length(display_name) between 1 and 80), bio text not null default '', created_at timestamptz not null default now());
 create table if not exists public.hub_posts (id uuid primary key default gen_random_uuid(), author_id uuid not null references public.hub_profiles(id) on delete cascade, body text not null default '' check(length(body)<=3000), media_path text, media_type text check(media_type in ('image','video')), created_at timestamptz not null default now(), check(length(trim(body))>0 or media_path is not null));
@@ -15,13 +16,6 @@ create index if not exists hub_comments_by_post on public.hub_comments(post_id,c
 create index if not exists hub_room_messages_recent on public.hub_room_messages(room_id,created_at desc);
 create index if not exists hub_direct_messages_recent on public.hub_direct_messages(conversation_id,created_at desc);
 create index if not exists hub_members_by_user on public.hub_conversation_members(user_id);
-create or replace function public.hub_on_user_signup() returns trigger language plpgsql security definer set search_path=public as $$
-begin
- insert into public.hub_profiles(id,username,display_name) values(new.id,'user_'||substr(replace(new.id::text,'-',''),1,16),coalesce(nullif(left(new.raw_user_meta_data->>'display_name',80),''),'New member'));
- return new;
-end;$$;
-drop trigger if exists hub_create_profile_on_signup on auth.users;
-create trigger hub_create_profile_on_signup after insert on auth.users for each row execute function public.hub_on_user_signup();
 create or replace function public.hub_is_conversation_member(cid uuid) returns boolean language sql stable security definer set search_path=public as $$ select exists(select 1 from public.hub_conversation_members where conversation_id=cid and user_id=auth.uid()) $$;
 create or replace function public.hub_start_dm(other_user uuid) returns uuid language plpgsql security definer set search_path=public as $$
 declare cid uuid;
@@ -43,6 +37,7 @@ alter table public.hub_conversations enable row level security;
 alter table public.hub_conversation_members enable row level security;
 alter table public.hub_direct_messages enable row level security;
 alter table public.hub_reports enable row level security;
+create policy "hub_profiles insert own" on public.hub_profiles for insert to authenticated with check(id=auth.uid());
 create policy "hub_profiles read" on public.hub_profiles for select to authenticated using(true);
 create policy "hub_profiles edit own" on public.hub_profiles for update to authenticated using(id=auth.uid()) with check(id=auth.uid());
 create policy "hub_posts read" on public.hub_posts for select to authenticated using(true);
